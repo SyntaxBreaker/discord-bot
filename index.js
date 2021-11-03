@@ -1,64 +1,73 @@
 require('dotenv').config();
-const fs = require('fs');
 const Discord = require('discord.js');
-const client = new Discord.Client();
+const {Client, Intents} = require('discord.js');
+const client = new Client({intents: [Intents.FLAGS.GUILDS, Intents.FLAGS.GUILD_MESSAGES]});
 client.commands = new Discord.Collection();
 const botCommands = require('./commands');
+const mongoose = require('mongoose');
+const Users = require('./models/users');
+const {getUserInfo, addPoints, updateLevel} = require('./functions/userFunctions');
 
 client.on('ready', () => {
-  console.log(`Logged in as ${client.user.tag}!`);
-
-  if (!fs.existsSync('database.json')) {
-    fs.writeFile('database.json', '{}', function (err) {
-      if (err) throw err;
-    });
-  }
+    console.log(`Logged in as ${client.user.tag}!`);
+    mongoose.connect(process.env.mongodbURI);
 });
 
 Object.keys(botCommands).map((key) => {
-  client.commands.set(botCommands[key].name, botCommands[key]);
+    client.commands.set(botCommands[key].name, botCommands[key]);
 });
 
-client.on('message', (msg) => {
-  const args = msg.content.split(/ +/);
-  const command = args.shift().toLowerCase();
-  let db = JSON.parse(fs.readFileSync('./database.json', 'utf-8'));
+client.on('messageCreate', (msg) => {
+    const args = msg.content.split(/ +/);
+    const command = args.shift().toLowerCase();
 
-  if (!client.commands.has(command)) return;
+    if (!client.commands.has(command)) {
+        getUserInfo(msg.author.id).then(userInfo => {
+            console.log(userInfo);
 
-  if (!db[msg.author.id]) {
-    db[msg.author.id] = {
-      xp: 0,
-      level: 0,
+            addPoints(msg.author.id);
+
+            if (userInfo.points > 100) {
+                updateLevel(msg.author.id);
+                msg.reply('Congratulations, you level up!')
+            }
+        });
+        return;
     };
-  }
 
-  let userData = db[msg.author.id];
+    Users.findOne({id: msg.author.id}, function (err, obj) {
+        if (err) {
+            console.log(err);
+        } else {
+            if (obj === null) {
+                const doc = Users.create({userId: msg.author.id});
+                doc.save();
+            }
+        }
+    });
 
-  try {
-    if (msg.content.includes('gamble')) {
-      client.commands.get(command).execute(msg, args);
-    } else if(msg.content.includes('stats'))  {
-      client.commands.get(command).execute(msg, args, userData);
-    } else {
-      userData.xp += Math.floor(Math.random() * 10) + 1;
+    try {
+        if (msg.content.includes('gamble')) {
+            client.commands.get(command).execute(msg, args);
+        } else if (msg.content.includes('stats')) {
+            client.commands.get(command).execute(msg, args);
+        } else {
+            getUserInfo(msg.author.id).then(userInfo => {
+                console.log(userInfo);
 
-      if (userData.xp > 100) {
-        userData.level++;
-        userData.xp = 0;
-        msg.reply(`Congratulations, you level up!`);
-      }
+                addPoints(msg.author.id);
 
-      fs.writeFile('./database.json', JSON.stringify(db), (err) => {
-        if (err) console.error(err);
-      });
-
-      client.commands.get(command).execute(msg, args);
+                if (userInfo.points > 100) {
+                    updateLevel(msg.author.id);
+                    msg.reply('Congratulations, you level up!')
+                }
+            });
+            client.commands.get(command).execute(msg, args);
+        }
+    } catch (error) {
+        console.error(error);
+        msg.reply('There was an error.');
     }
-  } catch (error) {
-    console.error(error);
-    msg.reply('There was an error.');
-  }
 });
 
-client.login(process.env.TOKEN);
+client.login(process.env.token);
